@@ -3,6 +3,7 @@ aiofiles==23.2.1
 annotated-types==0.7.0
 anyio==4.7.0
 attrs==24.2.0
+cachetools==5.5.0
 certifi==2024.8.30
 cffi==1.17.1
 charset-normalizer==3.4.0
@@ -16,8 +17,14 @@ filelock==3.16.1
 flatbuffers==24.3.25
 fonttools==4.55.0
 fsspec==2024.10.0
+google-api-core==2.24.0
+google-auth==2.37.0
+google-cloud-texttospeech==2.21.1
+googleapis-common-protos==1.66.0
 gradio==5.8.0
 gradio_client==1.5.1
+grpcio==1.68.1
+grpcio-status==1.68.1
 h11==0.14.0
 httpcore==1.0.7
 httpx==0.28.1
@@ -40,7 +47,10 @@ orjson==3.10.12
 packaging==24.2
 pandas==2.2.3
 pillow==11.0.0
-protobuf==4.25.5
+proto-plus==1.25.0
+protobuf==5.29.1
+pyasn1==0.6.1
+pyasn1_modules==0.4.1
 pycparser==2.22
 pydantic==2.10.3
 pydantic_core==2.27.1
@@ -53,6 +63,7 @@ pytz==2024.2
 PyYAML==6.0.2
 requests==2.32.3
 rich==13.9.4
+rsa==4.9
 ruff==0.8.2
 safehttpx==0.1.6
 scipy==1.14.1
