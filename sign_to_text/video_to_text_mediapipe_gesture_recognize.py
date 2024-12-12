@@ -134,9 +134,6 @@ while True:
     if (frame_counter % sampling_interval) != 0:
         continue  # Skip this frame
 
-    # Flip the frame horizontally for a mirror-like effect (optional)
-    frame = cv2.flip(frame, 1)
-
     # Resize the frame to the desired dimensions
     frame = cv2.resize(frame, (desired_width, desired_height))
 

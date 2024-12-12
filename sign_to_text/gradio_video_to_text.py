@@ -1,150 +1,215 @@
-import gradio as gr
 import mediapipe as mp
 import cv2
 import numpy as np
-import time
-import queue
-import threading
 from PIL import Image, ImageDraw, ImageFont
 import os
+import time
+import gradio as gr
 
-# Your existing functions
+# Desired output properties
+desired_fps = 5  # Set FPS to 5 as per your comment
+desired_height = 720  # Set height to 720 pixels
+
+gesture_threshold = 10  # Increased number of consecutive frames required to confirm a gesture
+
+# Define mapping from English gesture names to Arabic
 def map_english_to_arabic(english_name):
     arabic_mapping = {
-        'Alef': 'ا', 'Beh': 'ب', 'Teh': 'ت', 'Theh': 'ث', 'Jeem': 'ج', 
-        'Hah': 'ح', 'Khah': 'خ', 'Dal': 'د', 'Thal': 'ذ', 'Reh': 'ر', 
-        'Zain': 'ز', 'Seen': 'س', 'Sheen': 'ش', 'Sad': 'ص', 'Dad': 'ض', 
-        'Tah': 'ط', 'Zah': 'ظ', 'Ain': 'ع', 'Ghain': 'غ', 'Feh': 'ف', 
-        'Qaf': 'ق', 'Kaf': 'ك', 'Lam': 'ل', 'Meem': 'م', 'Noon': 'ن', 
-        'Heh': 'ه', 'Waw': 'و', 'Yeh': 'ي', 'Al': 'ال', 'Teh_Marbuta': 'ة', 
-        'Laa': ' '  
+        'Alef': 'ا', 'Beh': 'ب', 'Teh': 'ت', 'Theh': 'ث', 'Jeem': 'ج',
+        'Hah': 'ح', 'Khah': 'خ', 'Dal': 'د', 'Thal': 'ذ', 'Reh': 'ر',
+        'Zain': 'ز', 'Seen': 'س', 'Sheen': 'ش', 'Sad': 'ص', 'Dad': 'ض',
+        'Tah': 'ط', 'Zah': 'ظ', 'Ain': 'ع', 'Ghain': 'غ', 'Feh': 'ف',
+        'Qaf': 'ق', 'Kaf': 'ك', 'Lam': 'ل', 'Meem': 'م', 'Noon': 'ن',
+        'Heh': 'ه', 'Waw': 'و', 'Yeh': 'ي', 'Al': 'ال', 'Teh_Marbuta': 'ة',
+        'Laa': ' '  # Mapping 'Laa' to a space
     }
     return arabic_mapping.get(english_name, "Letter not found")
 
-# Path to the gesture recognition model
-model_path = '/home/adel/Documents/project1/Arsl_gesture_recognizer.task'
-
-# Initialize MediaPipe components
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-mp_hands = mp.solutions.hands
+# Initialize MediaPipe components for gesture recognition
 BaseOptions = mp.tasks.BaseOptions
 GestureRecognizer = mp.tasks.vision.GestureRecognizer
 GestureRecognizerOptions = mp.tasks.vision.GestureRecognizerOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
-def process_video(input_video):
-    # Initialize components for gesture recognition
-    options = GestureRecognizerOptions(
-        base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=VisionRunningMode.LIVE_STREAM,
-        num_hands=1,
-        result_callback=gesture_callback  # Pass the gesture callback here
-    )
+# Configure the gesture recognizer options
+model_path = '/home/adel/Documents/project1/Arsl_gesture_recognizer.task'
 
-    recognizer = GestureRecognizer.create_from_options(options)
-    hands = mp_hands.Hands(
-        static_image_mode=False,
-        min_detection_confidence=0.3,
-        max_num_hands=1
-    )
+options = GestureRecognizerOptions(
+    base_options=BaseOptions(model_asset_path=model_path),
+    running_mode=VisionRunningMode.VIDEO,  # Set to VIDEO for processing video frames natively
+    num_hands=1,
+)
 
-    result_queue = queue.Queue()
-    sentence = ""
+# Initialize the Gesture Recognizer
+recognizer = GestureRecognizer.create_from_options(options)
 
-    # Load the font
-    font_path = 'Amiri-Regular.ttf'
-    arabic_font = ImageFont.truetype(font_path, 32)
+# Drawing utilities for landmarks
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
 
-    # Prepare output video and text file
-    processed_frames = []
-    frame_counter = 0
+# Initialize the Hands object for drawing landmarks (outside the loop to avoid reinitialization)
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    min_detection_confidence=0.3,
+    max_num_hands=1
+)
 
-    video = cv2.VideoCapture(input_video)
+# Gradio Interface function to process video
+def process_video(input_video_path):
+
+    output_video_path = 'output.mp4'
+
+    # Initialize video capture from the input video file
+    video = cv2.VideoCapture(input_video_path)
+    if not video.isOpened():
+        return "Error: Could not open input video.", None
+
+    # Get original video properties
     original_fps = video.get(cv2.CAP_PROP_FPS)
     original_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
     original_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    desired_height = 720
+
+    # Calculate sampling interval to maintain playback speed
+    sampling_interval = int(original_fps / desired_fps)
+    if sampling_interval < 1:
+        sampling_interval = 1  # Ensure at least every frame is processed
+
+    # Calculate new width to maintain aspect ratio
     scale_factor = desired_height / original_height
     desired_width = int(original_width * scale_factor)
-    
+
+    # Initialize VideoWriter with desired FPS and frame size
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    temp_output_video_path = 'temp_output.mp4'
-    out_video = cv2.VideoWriter(temp_output_video_path, fourcc, original_fps, (desired_width, desired_height))
+    out_video = cv2.VideoWriter(output_video_path, fourcc, desired_fps, (desired_width, desired_height))
+
+    # Variables for gesture confirmation logic
+    current_gesture = None
+    gesture_count = 0
+    letter_added_for_current_gesture = False
+    sentence = ""  # The constructed sentence
+
+    # Load a font that supports Arabic characters
+    font_path = 'Amiri-Regular.ttf'   # Ensure this path is correct
+    if not os.path.isfile(font_path):
+        return f"Error: Font file not found at {font_path}.", None
 
     try:
-        while True:
-            ret, frame = video.read()
-            if not ret:
-                break  # End of video
+        arabic_font = ImageFont.truetype(font_path, 40)
+    except IOError:
+        return f"Error: Unable to load font at {font_path}.", None
 
-            frame_counter += 1
-            frame = cv2.flip(frame, 1)  # Mirror effect
-            frame = cv2.resize(frame, (desired_width, desired_height))
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+    # Process video frames
+    frame_counter = 0
+    while True:
+        ret, frame = video.read()
+        if not ret:
+            # Reached the end of the video
+            break
 
-            recognizer.recognize_async(mp_image, timestamp_ms=int(time.time() * 1000))
+        frame_counter += 1
 
-            while not result_queue.empty():
-                result, _ = result_queue.get()
-                if result.gestures:
-                    gesture = result.gestures[0][0]
-                    category_name = gesture.category_name
-                    confidence = gesture.score
-                    if category_name != current_gesture:
-                        current_gesture = category_name
-                        gesture_count = 1
-                    else:
-                        gesture_count += 1
+        # Sample frames based on the sampling_interval
+        if (frame_counter % sampling_interval) != 0:
+            continue  # Skip this frame
 
-                    if gesture_count == gesture_threshold:
-                        arabic_letter = map_english_to_arabic(category_name)
-                        sentence += arabic_letter
+        # Resize the frame to the desired dimensions
+        frame = cv2.resize(frame, (desired_width, desired_height))
 
-            results = hands.process(frame_rgb)
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style()
-                    )
+        # Convert the frame to RGB for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            draw = ImageDraw.Draw(pil_image)
-            text_position = (10, pil_image.height - 50)
-            text_color = (255, 0, 0)
-            draw.text(text_position, f'Sentence: {sentence}', font=arabic_font, fill=text_color)
+        # Create a MediaPipe Image from the RGB frame
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
-            frame_with_text = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-            out_video.write(frame_with_text)
-            processed_frames.append(frame_with_text)
+        # Perform gesture recognition on the provided single image
+        frame_timestamp_ms = int(time.time() * 1000)  # Timestamp in milliseconds
+        gesture_recognition_result = recognizer.recognize_for_video(mp_image, frame_timestamp_ms)
 
-        video.release()
-        out_video.release()
+        # Process the gesture recognition result
+        if gesture_recognition_result.gestures:
+            # Assuming only one gesture is detected per frame
+            gesture = gesture_recognition_result.gestures[0][0]
+            category_name = gesture.category_name
+            confidence = gesture.score
 
-        return processed_frames, sentence
+            print(f'Gesture: {category_name}, Confidence: {confidence:.2f}')
+            
+            # Check if it's a new gesture or the same as the current one
+            if category_name != current_gesture:
+                # New gesture detected, reset the counting logic
+                current_gesture = category_name
+                gesture_count = 1
+                letter_added_for_current_gesture = False
+            else:
+                gesture_count += 1
 
-    except Exception as e:
-        print(f"Error: {e}")
-        video.release()
-        out_video.release()
-        
-def gradio_interface(input_video):
-    # Process video and return the processed video and the text
-    processed_video, sentence = process_video(input_video)
-    return processed_video, sentence
+            # Check if we've reached the threshold and haven't added a letter yet for this gesture
+            if gesture_count == gesture_threshold and not letter_added_for_current_gesture:
+                arabic_letter = map_english_to_arabic(category_name)
+                if arabic_letter != "Letter not found":
+                    sentence += arabic_letter
+                    print(f'Added Arabic Letter: {arabic_letter}')
+                else:
+                    print(f'No mapping found for gesture: {category_name}')
 
+                letter_added_for_current_gesture = True
+        else:
+            # Reset if no gesture is detected
+            current_gesture = None
+            gesture_count = 0
+            letter_added_for_current_gesture = False
+
+        # Process hand landmarks (optional, if you want to draw hand landmarks)
+        results = hands.process(frame_rgb)
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style()
+                )
+
+        # Convert the OpenCV frame (BGR) to PIL Image (RGB)
+        pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+        # Initialize ImageDraw
+        draw = ImageDraw.Draw(pil_image)
+
+        # Draw the constructed sentence on the PIL image
+        text_color = (0, 0, 0)  # Black color in RGB
+        sentence_position = (10, 10)  # Top-left corner
+        status_position = (10, 60)    # Below the sentence
+        draw.text(sentence_position, f'Sentence: {sentence}', font=arabic_font, fill=text_color)
+
+        # Optionally, display the current gesture and confirmation status
+        status_font = ImageFont.truetype(font_path, 30)  # Increased font size from 24 to 30
+        if current_gesture is not None:
+            status_text = f'Current Gesture: {current_gesture} ({gesture_count}/{gesture_threshold})'
+            if letter_added_for_current_gesture:
+                status_text += " [Confirmed]"
+            draw.text(status_position, status_text, font=status_font, fill=text_color)
+
+        # Convert the PIL image back to OpenCV format (BGR)
+        frame_with_text = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+        # Write the processed frame to the output video
+        out_video.write(frame_with_text)
+
+    # Release resources
+    video.release()
+    out_video.release()
+
+    return sentence, output_video_path
 
 # Create Gradio interface
-interface = gr.Interface(
-    fn=gradio_interface,
-    inputs=gr.Video(label="Input Video"),
-    outputs=[gr.Video(label="Processed Video"), gr.Textbox(label="Translated Text")],
-    live=True
+demo = gr.Interface(
+    fn=process_video,  # The function to run
+    inputs=gr.Video(),  # Input is a video file
+    outputs=[gr.Textbox(), gr.Video()],  # Output is both text and the processed video
+    live=True  # Enable live updates
 )
 
-interface.launch()
+demo.launch(share=True, show_error=True)
